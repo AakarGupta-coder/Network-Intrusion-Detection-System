@@ -103,11 +103,11 @@ Make sure you have the following installed:
 4.  Run the application with administrator/root privileges:
 
     **On Windows:**
-    * Open Command Prompt or PowerShell **as Administrator**.
-    * Navigate to the project directory and run:
-        ```bash
-        python main.py
-        ```
+    - Open Command Prompt or PowerShell **as Administrator**.
+    - Navigate to the project directory and run:
+    ```bash
+    python main.py
+    ```
 
     **On Linux/macOS:**
     ```bash
