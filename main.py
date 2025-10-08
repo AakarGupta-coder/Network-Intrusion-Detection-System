@@ -9,7 +9,7 @@ import threading
 import time
 import re
 import socket
-
+from PIL import Image, ImageTk 
 from scapy.all import sniff, IP, TCP, Raw, get_if_list, get_if_addr
 
 class SQLInjectionParser:
@@ -98,7 +98,7 @@ class NIDSEngine:
                         "  (The '--' comments out the rest of the original query)",
                         "",
                         "--- Simulated Database Response ---",
-                        "QUERY EXECUTED: SELECT * FROM users WHERE username='' OR '1'='1' --' AND password='...'",
+                        "QUERY EXECUTED: SELECT * FROM users WHERE username='' OR '1'='1' --'",
                         "RESULT: Authenticated as: 'admin'",
                         "EFFECT: Full data exposure or unauthorized access for the first matching user."
                     ]
@@ -207,10 +207,11 @@ class TrafficSniffer:
 class NIDSApp:
     def __init__(self, master):
         self.master = master
-        master.title("Advanced Network Intrusion Detection System (NIDS)")
-        # Set a reasonable default size, allow it to be responsive
-        master.geometry("1400x850") # This is a suggestion, it will adapt
-        master.update_idletasks() # Ensures geometry is calculated before mainloop
+        master.title("Sentinel - Live Network Intrusion Detection System")
+        master.geometry("1400x850")
+        master.update_idletasks()
+
+        self._set_favicon()
 
         self.current_theme = "dark"
         self._setup_styles()
@@ -224,6 +225,9 @@ class NIDSApp:
         self.sniffer = TrafficSniffer(self._handle_sniffed_data)
         self.sniffing_active = False
 
+        self.logo_image = None
+        self._load_dashboard_logo()
+
         self._create_widgets()
         self._setup_graphs()
         self.toggle_theme(initial_setup=True)
@@ -233,10 +237,32 @@ class NIDSApp:
         self.net_io_data_sent = deque(maxlen=60)
         self.net_io_data_recv = deque(maxlen=60)
         self.network_monitoring_active = False
-        # Start a thread to continuously update network stats for the speedometer
+        self.persistent_monitor_active = False 
         self._start_persistent_network_monitor() 
 
         self.master.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _set_favicon(self):
+        try:
+            img = Image.open("shield_icon.png") 
+            self.shield_photo = ImageTk.PhotoImage(img)
+            self.master.iconphoto(True, self.shield_photo)
+            
+        except Exception as e:
+            print(f"Could not set favicon: {e}")
+
+    def _load_dashboard_logo(self):
+        try:
+            original_image = Image.open("shield_icon.png")
+            target_height = 28 
+            aspect_ratio = original_image.width / original_image.height
+            target_width = int(target_height * aspect_ratio)
+            
+            resized_image = original_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            self.logo_image = ImageTk.PhotoImage(resized_image)
+        except Exception as e:
+            print(f"Could not load dashboard logo: {e}")
+            self.logo_image = None
 
     def _setup_styles(self):
         self.style = ttk.Style()
@@ -260,13 +286,19 @@ class NIDSApp:
         footer_fg = "#9E9E9E" if is_dark else "#616161"
         tree_selected_bg = "#1976D2" if is_dark else "#BBDEFB"
 
+        combobox_bg = "#424242" if is_dark else "#FFFFFF"
+        combobox_fg = "#E0E0E0" if is_dark else "#333333"
+        combobox_arrow_bg = "#616161" if is_dark else "#DDDDDD" 
+        combobox_arrow_fg = "#E0E0E0" if is_dark else "#333333" 
+        combobox_selection_bg = "#1976D2" if is_dark else "#BBDEFB"
+        combobox_selection_fg = "#FFFFFF" if is_dark else "#000000"
+
         self.master.configure(bg=bg_color)
         self.style.configure('TFrame', background=bg_color)
         self.style.configure('Dark.TLabelframe', background=panel_bg, foreground=text_color, font=('Segoe UI', 12, 'bold'))
         self.style.configure('Dark.TLabelframe.Label', background=panel_bg, foreground=text_color, font=('Segoe UI', 12, 'bold'))
         self.style.configure('TLabel', background=panel_bg, foreground=text_color, font=('Segoe UI', 10))
         self.style.configure('Header.TLabel', background=bg_color, foreground=header_fg, font=('Segoe UI', 20, 'bold'))
-        # Custom style for the footer label to allow centering easily
         self.style.configure('CenteredFooter.TLabel', background=bg_color, foreground=footer_fg, font=('Segoe UI', 8), anchor='center')
         self.style.configure('TButton', background=button_bg, foreground=button_fg, font=('Segoe UI', 10, 'bold'), borderwidth=0)
         self.style.map('TButton', background=[('active', '#616161' if is_dark else '#CCCCCC')])
@@ -275,14 +307,40 @@ class NIDSApp:
         self.style.map('Treeview', background=[('selected', tree_selected_bg)])
         self.style.configure('Treeview.Heading', background=panel_bg, foreground=text_color, font=('Segoe UI', 10, 'bold'))
         
+        self.style.configure('TCombobox', 
+                             fieldbackground=combobox_bg, 
+                             foreground=combobox_fg,
+                             background=combobox_arrow_bg, 
+                             arrowcolor=combobox_arrow_fg,
+                             selectbackground=combobox_selection_bg,
+                             selectforeground=combobox_selection_fg,
+                             borderwidth=0)
+        self.style.map('TCombobox',
+                       fieldbackground=[('readonly', combobox_bg)],
+                       background=[('readonly', combobox_arrow_bg)],
+                       foreground=[('readonly', combobox_fg)],
+                       selectbackground=[('readonly', combobox_selection_bg)],
+                       selectforeground=[('readonly', combobox_selection_fg)],
+                       arrowcolor=[('disabled', combobox_arrow_fg), ('active', combobox_arrow_fg)])
+        
+        self.style.configure("TCombobox.Border", 
+                             background=combobox_bg, 
+                             lightcolor=combobox_bg,
+                             darkcolor=combobox_bg)
+        self.style.map("TCombobox.Border",
+                       background=[('active', combobox_selection_bg)],
+                       foreground=[('active', combobox_selection_fg)])
+
         self.log_text.config(background=log_bg, insertbackground=text_color)
         self.log_text.tag_config("green", foreground=log_fg_benign)
         self.log_text.tag_config("red", foreground=log_fg_malicious)
 
-        # Speedometer labels
         self.style.configure('Speed.TLabel', background=panel_bg, foreground=text_color, font=('Segoe UI', 14, 'bold'))
         self.style.configure('SpeedTitle.TLabel', background=panel_bg, foreground=text_color, font=('Segoe UI', 10))
         
+        if hasattr(self, 'logo_label'):
+            self.logo_label.config(background=bg_color)
+
         if hasattr(self, 'bar_fig'):
             self._update_graphs()
 
@@ -293,65 +351,62 @@ class NIDSApp:
         self._configure_theme_styles()
 
     def _create_widgets(self):
-        # Configure grid for the master window to handle responsiveness
-        self.master.grid_rowconfigure(0, weight=1) # Row for main content, allows it to expand
-        self.master.grid_rowconfigure(1, weight=0) # Row for footer, fixed height
-        self.master.grid_columnconfigure(0, weight=1) # Column for all content, allows it to expand
+        self.master.grid_rowconfigure(0, weight=1) 
+        self.master.grid_rowconfigure(1, weight=0) 
+        self.master.grid_columnconfigure(0, weight=1) 
 
-        # Header Frame
         header_frame = ttk.Frame(self.master, style='TFrame')
-        header_frame.grid(row=0, column=0, sticky="new", pady=(10, 5), padx=20) # sticky="new" for North, East, West
-        header_frame.grid_columnconfigure(0, weight=1) # Make the left part (title) expand
-        header_frame.grid_columnconfigure(1, weight=0) # Keep buttons fixed
+        header_frame.grid(row=0, column=0, sticky="new", pady=(10, 5), padx=20) 
+        header_frame.grid_columnconfigure(0, weight=0)
+        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=0)
 
-        ttk.Label(header_frame, text="Advanced Network Intrusion Detection System (NIDS)", style="Header.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 20))
+        if self.logo_image:
+            self.logo_label = ttk.Label(header_frame, image=self.logo_image, background=self.master.cget('bg'))
+            self.logo_label.grid(row=0, column=0, sticky="w", padx=(0, 5))
+
+        ttk.Label(header_frame, text="Sentinel - Live Network Intrusion Detection System", style="Header.TLabel").grid(row=0, column=1, sticky="w", padx=(0, 20)) 
         
-        # Button container in the header
         header_buttons_frame = ttk.Frame(header_frame, style='TFrame')
-        header_buttons_frame.grid(row=0, column=1, sticky="e")
+        header_buttons_frame.grid(row=0, column=2, sticky="e")
 
         self.theme_button = ttk.Button(header_buttons_frame, text="Light Mode", command=self.toggle_theme)
-        self.theme_button.pack(side=tk.LEFT, padx=5) # Use pack inside this sub-frame for buttons
+        self.theme_button.pack(side=tk.LEFT, padx=5) 
         ttk.Button(header_buttons_frame, text="About This App", command=self._show_about_info).pack(side=tk.LEFT, padx=5)
         
         self.more_info_button = ttk.Button(header_buttons_frame, text="More Info", command=self._show_more_info)
         self.more_info_button.pack(side=tk.LEFT, padx=5)
-        self.more_info_button.pack_forget() # Initially hidden
+        self.more_info_button.pack_forget() 
         
         ttk.Button(header_buttons_frame, text="Network Info", command=self._show_network_info).pack(side=tk.LEFT, padx=5)
 
-        # Main Content Frame (occupies the rest of row 0, below the header)
         self.main_frame = ttk.Frame(self.master, padding="10 10 10 20", style='TFrame')
-        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(60, 5)) # pady pushes it below the header
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(60, 5)) 
         
-        # Ensure main_frame's columns also expand
-        self.main_frame.grid_columnconfigure(0, weight=1) # Left panel column
-        self.main_frame.grid_columnconfigure(1, weight=1) # Right panel column
-        self.main_frame.grid_rowconfigure(0, weight=1) # Allow row to expand
+        self.main_frame.grid_columnconfigure(0, weight=1) 
+        self.main_frame.grid_columnconfigure(1, weight=1) 
+        self.main_frame.grid_rowconfigure(0, weight=1) 
 
-        # Left and Right Panels within the main_frame - using grid for better control over expansion
         self.left_panel = ttk.Frame(self.main_frame, style='TFrame')
-        self.left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=5) # sticky "nsew" allows it to expand
+        self.left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=5) 
         
-        # Configure rows within left_panel to expand correctly
-        self.left_panel.grid_rowconfigure(0, weight=0) # Sniff control
-        self.left_panel.grid_rowconfigure(1, weight=0) # Manual analysis
-        self.left_panel.grid_rowconfigure(2, weight=1) # Activity Log - crucial for vertical expansion
-        self.left_panel.grid_rowconfigure(3, weight=1) # Detection History - crucial for vertical expansion
-        self.left_panel.grid_columnconfigure(0, weight=1) # Only one column
+        self.left_panel.grid_rowconfigure(0, weight=0) 
+        self.left_panel.grid_rowconfigure(1, weight=0) 
+        self.left_panel.grid_rowconfigure(2, weight=1) 
+        self.left_panel.grid_rowconfigure(3, weight=1) 
+        self.left_panel.grid_columnconfigure(0, weight=1) 
 
         self.right_panel = ttk.Frame(self.main_frame, style='TFrame')
-        self.right_panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=5) # sticky "nsew" allows it to expand
+        self.right_panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=5) 
 
-        # Live Traffic Analysis Frame
         self.sniff_control_frame = ttk.LabelFrame(self.left_panel, text="Live Traffic Analysis", style="Dark.TLabelframe", padding="10")
-        self.sniff_control_frame.grid(row=0, column=0, sticky="ew", pady=10) # Using grid for vertical stacking in left_panel
+        self.sniff_control_frame.grid(row=0, column=0, sticky="ew", pady=10) 
 
         ttk.Label(self.sniff_control_frame, text="Select Interface:", style='TLabel').pack(anchor=tk.W, pady=(0, 5))
         
         interfaces = get_if_list()
         self.iface_combobox_var = StringVar(self.sniff_control_frame)
-        self.iface_combobox = ttk.Combobox(self.sniff_control_frame, textvariable=self.iface_combobox_var, values=interfaces, width=37, font=('Segoe UI', 10))
+        self.iface_combobox = ttk.Combobox(self.sniff_control_frame, textvariable=self.iface_combobox_var, values=interfaces, width=37, font=('Segoe UI', 10), style='TCombobox')
         if interfaces:
             self.iface_combobox.set(interfaces[0])
         self.iface_combobox.pack(fill=tk.X, pady=(0, 5))
@@ -365,7 +420,6 @@ class NIDSApp:
         self.stop_sniff_button = ttk.Button(self.sniff_control_frame, text="Stop Sniffing", command=self._stop_sniffing, state=tk.DISABLED)
         self.stop_sniff_button.pack(side=tk.RIGHT, expand=True, padx=(5, 0))
         
-        # Manual Payload Analysis Frame
         self.manual_frame = ttk.LabelFrame(self.left_panel, text="Manual Payload Analysis", style="Dark.TLabelframe", padding="10")
         self.manual_frame.grid(row=1, column=0, sticky="ew", pady=10)
 
@@ -376,19 +430,17 @@ class NIDSApp:
 
         ttk.Button(self.manual_frame, text="Analyze Payload", command=self._manual_detect).pack(fill=tk.X)
 
-        # Activity Log Frame
         self.log_frame = ttk.LabelFrame(self.left_panel, text="Activity Log", style="Dark.TLabelframe", padding="10")
-        self.log_frame.grid(row=2, column=0, sticky="nsew", pady=10) # sticky="nsew" for expansion
+        self.log_frame.grid(row=2, column=0, sticky="nsew", pady=10) 
 
-        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, height=8, font=('Consolas', 9), relief="flat") # Reduced initial height
-        self.log_text.pack(fill=tk.BOTH, expand=True) # Crucial for log_text to expand
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, height=8, font=('Consolas', 9), relief="flat") 
+        self.log_text.pack(fill=tk.BOTH, expand=True) 
         self.log_text.config(state=tk.DISABLED)
 
-        # Detection History Frame
         self.history_frame = ttk.LabelFrame(self.left_panel, text="Detection History", style="Dark.TLabelframe", padding="10")
-        self.history_frame.grid(row=3, column=0, sticky="nsew", pady=10) # sticky="nsew" for expansion
+        self.history_frame.grid(row=3, column=0, sticky="nsew", pady=10) 
 
-        self.tree = ttk.Treeview(self.history_frame, columns=("Time", "Source", "Destination", "Payload Sample", "Type"), show="headings", height=8) # Reduced initial height
+        self.tree = ttk.Treeview(self.history_frame, columns=("Time", "Source", "Destination", "Payload Sample", "Type"), show="headings", height=8) 
         self.tree.heading("Time", text="Time", anchor=tk.W)
         self.tree.heading("Source", text="Src IP:Port", anchor=tk.W)
         self.tree.heading("Destination", text="Dst IP:Port", anchor=tk.W)
@@ -399,30 +451,27 @@ class NIDSApp:
         self.tree.column("Destination", width=100, stretch=tk.NO)
         self.tree.column("Payload Sample", width=150, stretch=tk.YES)
         self.tree.column("Type", width=100, stretch=tk.NO)
-        self.tree.pack(fill=tk.BOTH, expand=True) # Crucial for tree to expand
+        self.tree.pack(fill=tk.BOTH, expand=True) 
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
-        # Dashboard Summary Frame (Right Panel)
-        # Wrapper frame to control the width of the summary_frame
         self.summary_wrapper_frame = ttk.Frame(self.right_panel, style='TFrame')
-        self.summary_wrapper_frame.pack(fill=tk.X, anchor='n', pady=5) # anchor='n' keeps it at the top, fill=tk.NONE stops horizontal stretch
+        self.summary_wrapper_frame.pack(fill=tk.X, anchor='n', pady=5) 
         
         self.summary_frame = ttk.LabelFrame(self.summary_wrapper_frame, text="Dashboard Summary", style="Dark.TLabelframe", padding="10")
-        self.summary_frame.pack(fill=tk.X, expand=True) # The LabelFrame can still expand within its wrapper
+        self.summary_frame.pack(fill=tk.X, expand=True) 
 
         self.total_intrusions_label = ttk.Label(self.summary_frame, text="Total Intrusions: 0", font=('Segoe UI', 11, 'bold'), style='TLabel')
         self.total_intrusions_label.pack(anchor=tk.W, pady=2)
         self.total_processed_label = ttk.Label(self.summary_frame, text="Total Processed: 0", font=('Segoe UI', 11, 'bold'), style='TLabel')
         self.total_processed_label.pack(anchor=tk.W, pady=2)
 
-        # Speedometer section
         self.speedometer_frame = ttk.LabelFrame(self.right_panel, text="Network Speed", style="Dark.TLabelframe", padding="10")
         self.speedometer_frame.pack(fill=tk.X, pady=5)
         
         speed_grid_frame = ttk.Frame(self.speedometer_frame, style='TFrame')
         speed_grid_frame.pack(fill=tk.X, expand=True)
-        speed_grid_frame.grid_columnconfigure(0, weight=1) # Column for labels
-        speed_grid_frame.grid_columnconfigure(1, weight=1) # Column for values
+        speed_grid_frame.grid_columnconfigure(0, weight=1) 
+        speed_grid_frame.grid_columnconfigure(1, weight=1) 
 
         ttk.Label(speed_grid_frame, text="Upload:", style='SpeedTitle.TLabel').grid(row=0, column=0, sticky='w', pady=2)
         self.upload_speed_label = ttk.Label(speed_grid_frame, text="0.00 KB/s", style='Speed.TLabel', anchor='e')
@@ -432,9 +481,8 @@ class NIDSApp:
         self.download_speed_label = ttk.Label(speed_grid_frame, text="0.00 KB/s", style='Speed.TLabel', anchor='e')
         self.download_speed_label.grid(row=1, column=1, sticky='e', pady=2)
 
-        # Graphs Container Frame
         self.graphs_container = ttk.Frame(self.right_panel, style='TFrame')
-        self.graphs_container.pack(fill=tk.BOTH, expand=True, pady=5) # fill=tk.BOTH, expand=True for graphs container
+        self.graphs_container.pack(fill=tk.BOTH, expand=True, pady=5) 
         self.graphs_container.grid_columnconfigure(0, weight=1)
         self.graphs_container.grid_columnconfigure(1, weight=1)
         self.graphs_container.grid_rowconfigure(0, weight=1)
@@ -445,19 +493,16 @@ class NIDSApp:
         self.pie_chart_frame = ttk.LabelFrame(self.graphs_container, text="Traffic Analysis", style="Dark.TLabelframe", padding="10")
         self.pie_chart_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
-        # Footer Frame (in its own grid row at the bottom)
         footer_frame = ttk.Frame(self.master, style='TFrame')
-        footer_frame.grid(row=1, column=0, sticky="ew", pady=(5, 10), padx=20) # sticky="ew" to stretch horizontally
+        footer_frame.grid(row=1, column=0, sticky="ew", pady=(5, 10), padx=20) 
         
-        # Center the footer label using the custom style
         ttk.Label(footer_frame, text="Made by Aakar Gupta", style="CenteredFooter.TLabel").pack(expand=True, fill=tk.X, anchor=tk.CENTER)
 
     def _on_closing(self):
         if self.sniffing_active:
             self._stop_sniffing()
-        # Ensure network monitoring thread is stopped
         self._stop_persistent_network_monitor()
-        self._stop_network_monitoring() # Also close the network info window if open
+        self._stop_network_monitoring() 
         self.master.destroy()
 
     def _start_sniffing(self):
@@ -566,8 +611,7 @@ class NIDSApp:
         self.selected_payload = log_entry['payload']
         
         if self.selected_intrusion_type:
-            # Re-pack the button to make it visible
-            self.more_info_button.pack(side=tk.LEFT, padx=5) # Ensure it's packed correctly
+            self.more_info_button.pack(side=tk.LEFT, padx=5) 
         else:
             self.more_info_button.pack_forget()
 
@@ -640,7 +684,7 @@ class NIDSApp:
         is_dark = self.current_theme == "dark"
         mpl_bg = "#303030" if is_dark else "#FFFFFF"
         mpl_text = "#E0E0E0" if is_dark else "#333333"
-        pie_colors = ['#4CAF50', '#EF5350'] if is_dark else ['#66BB6A', '#E53935'] # Light mode colors for pie chart
+        pie_colors = ['#4CAF50', '#EF5350'] if is_dark else ['#66BB6A', '#E53935'] 
 
         self.bar_ax.clear()
         self.bar_fig.set_facecolor(mpl_bg)
@@ -664,7 +708,7 @@ class NIDSApp:
         self.bar_canvas.draw_idle()
         
         self.pie_ax.clear()
-        self.pie_fig.set_facecolor(mpl_bg) # Apply theme background
+        self.pie_fig.set_facecolor(mpl_bg) 
         total_intrusions = sum(self.detection_counts[k] for k in self.detection_counts if k != "Benign")
         pie_labels = ['Benign', 'Malicious']
         pie_values = [self.detection_counts['Benign'], total_intrusions]
@@ -689,7 +733,7 @@ class NIDSApp:
         return window
 
     def _show_about_info(self):
-        about_window = self._create_themed_toplevel("About Advanced NIDS", "550x380")
+        about_window = self._create_themed_toplevel("About Sentinel", "550x380") 
         
         text_bg = "#303030" if self.current_theme == "dark" else "#FFFFFF"
         text_fg = "#E0E0E0" if self.current_theme == "dark" else "#333333"
@@ -697,14 +741,13 @@ class NIDSApp:
         info_frame = ttk.Frame(about_window, padding=20, style='TFrame')
         info_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(info_frame, text="About This Advanced NIDS Application", font=('Segoe UI', 14, 'bold'), style='Header.TLabel').pack(pady=(5, 15))
+        ttk.Label(info_frame, text="About Sentinel - A Live Network Intrusion Detection System", font=('Segoe UI', 14, 'bold'), style='Header.TLabel').pack(pady=(5, 15)) 
 
         details_text = tk.Text(info_frame, wrap=tk.WORD, font=('Segoe UI', 10),
                                bg=text_bg, fg=text_fg, relief="flat", borderwidth=0)
+        
         about_info = """
-This Advanced Network Intrusion Detection System (NIDS) provides sophisticated real-time monitoring and analysis of network traffic for cybersecurity threats.
-
-It utilizes robust signature-based detection mechanisms to identify critical web vulnerabilities such as SQL Injection and Cross-Site Scripting (XSS) within live network payloads. The system offers a dynamic, user-friendly dashboard for visual insights, a comprehensive activity log, and interactive attack simulations to vividly demonstrate potential impacts.
+Sentinel is a full-fledged Network Intrusion Detection System (NIDS) with a modern, interactive dashboard built entirely in Python. It captures and analyzes live network traffic to identify common web-based threats like SQL Injection and Cross-Site Scripting (XSS) using a sophisticated, signature-based detection engine.
 
 Key Features:
 - Real-time Packet Sniffing (requires admin/root privileges)
@@ -768,7 +811,7 @@ Detection Logic:
         ttk.Label(info_frame, text="Attack Simulation:", font=('Segoe UI', 12, 'bold'), style='TLabel').pack(anchor=tk.W, pady=(5, 5))
         
         self.simulation_text = scrolledtext.ScrolledText(info_frame, wrap=tk.WORD, height=10, font=('Consolas', 9),
-                                                          background=text_bg, foreground=log_fg_sim_normal, relief="flat")
+                                                         background=text_bg, foreground=log_fg_sim_normal, relief="flat")
         self.simulation_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.simulation_text.config(state=tk.DISABLED)
         
@@ -838,9 +881,14 @@ Detection Logic:
     def _run_persistent_network_monitor(self):
         while self.persistent_monitor_active:
             self._update_network_speed_labels()
-            time.sleep(0.5) # Update speedometer labels every 0.5 seconds
+            time.sleep(0.5) 
 
     def _update_network_speed_labels(self):
+        
+        if not self.upload_speed_label.winfo_exists() or not self.download_speed_label.winfo_exists():
+            self.persistent_monitor_active = False
+            return
+
         current_time = time.time()
         time_diff = current_time - self.last_net_io_time
         
@@ -851,16 +899,14 @@ Detection Logic:
 
         if time_diff > 0:
             bytes_sent_diff = (current_net_io.bytes_sent - self.last_net_io.bytes_sent) / time_diff / 1024
-            bytes_recv_diff = (current_net_io.bytes_recv - self.last_net_io.bytes_recv) / time_diff / 1024
+            bytes_recv_diff = (current_net_io.bytes_recv - self.last_net_io.bytes_recv) / time_diff / 1024 
 
         self.last_net_io = current_net_io
         self.last_net_io_time = current_time
 
-        # Update labels in the main window
         self.master.after(0, lambda: self.upload_speed_label.config(text=f"{bytes_sent_diff:.2f} KB/s"))
         self.master.after(0, lambda: self.download_speed_label.config(text=f"{bytes_recv_diff:.2f} KB/s"))
 
-        # Also update the deque for the graph, if the network info window is open
         if self.network_monitoring_active:
             self.net_io_data_sent.append(bytes_sent_diff)
             self.net_io_data_recv.append(bytes_recv_diff)
@@ -875,9 +921,6 @@ Detection Logic:
 
         ttk.Label(network_frame, text="Real-time Network Activity", font=('Segoe UI', 14, 'bold'), style='Header.TLabel').pack(pady=(5, 10))
         
-        # Removed self.net_stats_label as the speedometer replaces its function in the main window
-        # No need for a separate label in the network info window
-
         ttk.Label(network_frame, text="Current Interface Statistics:", font=('Segoe UI', 11, 'bold'), style='TLabel').pack(anchor=tk.W, pady=(5, 5))
         self.net_table = ttk.Treeview(network_frame, columns=("Metric", "Value"), show="headings", height=6)
         self.net_table.heading("Metric", text="Metric", anchor=tk.W)
@@ -894,8 +937,8 @@ Detection Logic:
         ttk.Button(network_frame, text="Close", command=lambda: self._stop_network_monitoring()).pack(pady=(10, 5))
 
         self.network_monitoring_active = True
-        self._update_network_monitor() # Start the graph updates for this window
-
+        self._update_network_monitor() 
+    
     def _update_network_monitor(self):
         if not hasattr(self, 'network_window') or not self.network_window.winfo_exists():
             self.network_monitoring_active = False  
@@ -903,7 +946,6 @@ Detection Logic:
             
         current_net_io = psutil.net_io_counters()
 
-        # Update the network stats table
         for item in self.net_table.get_children():
             self.net_table.delete(item)
         
@@ -915,7 +957,6 @@ Detection Logic:
         self.net_table.insert("", tk.END, values=("Errors In (Total)", f"{current_net_io.errin}"))
         self.net_table.insert("", tk.END, values=("Errors Out (Total)", f"{current_net_io.errout}"))
 
-        # Update the graph
         is_dark = self.current_theme == "dark"
         mpl_bg = "#303030" if is_dark else "#FFFFFF"
         mpl_text = "#E0E0E0" if is_dark else "#333333"
@@ -929,7 +970,7 @@ Detection Logic:
             self.net_ax.legend(loc='upper left', frameon=False, labelcolor=mpl_text)
             self.net_ax.set_title("Network I/O (KB/s)", color=mpl_text, fontsize=10)
             self.net_ax.set_ylabel("Speed (KB/s)", color=mpl_text, fontsize=8)
-            self.net_ax.set_xlabel("Time Elapsed (seconds)", color=mpl_text, fontsize=8) # Modified x-axis label
+            self.net_ax.set_xlabel("Time Elapsed (seconds)", color=mpl_text, fontsize=8) 
             self.net_ax.set_facecolor(mpl_bg)
             self.net_fig.set_facecolor(mpl_bg)
             self.net_ax.tick_params(colors=mpl_text, labelsize=7)
@@ -939,7 +980,7 @@ Detection Logic:
             self.net_fig.tight_layout()
             self.net_canvas.draw_idle()
         
-        self.network_window.after(200, self._update_network_monitor) # Update graph and table every 200 ms
+        self.network_window.after(200, self._update_network_monitor) 
     
     def _stop_network_monitoring(self):
         self.network_monitoring_active = False
